@@ -91,10 +91,16 @@ function localParser(message) {
     return { action: 'delete', ...EMPTY, service };
   }
 
-  // Consultar
-  if (/cu[aá]l|d[ií]me|dame|consulta/i.test(lower) && !/user\s*:|pass\s*:/i.test(lower)) {
-    const m = clean.match(/\bde\s+([\w\s.-]+?)(?:\s*[?.,]?\s*$)/i);
+  // Consultar — "dime la de X", "cuál es X", "contraseña de X", solo el nombre del servicio
+  if (/cu[aá]l|d[ií]me|dame|consulta|clave\s+de|contrase[ñn]a\s+de|pass\s+de/i.test(lower) && !/user\s*:|pass\s*:/i.test(lower)) {
+    const m = clean.match(/\bde\s+([\w\s.-]+?)(?:\s*[?.,]?\s*$)/i)
+           || clean.match(/\bla\s+([\w\s.-]+?)(?:\s*[?.,]?\s*$)/i);
     return { action: 'get', ...EMPTY, service: m?.[1]?.trim().toLowerCase() || null };
+  }
+
+  // Si el mensaje es solo un nombre de servicio sin credenciales ni verbos → consultar
+  if (/^[\w\s.-]{2,40}$/.test(clean) && !/^(?:hola|ok|gracias|si|no)\s*$/i.test(lower)) {
+    return { action: 'get', ...EMPTY, service: lower.trim() };
   }
 
   // Guardar — detectar credenciales
