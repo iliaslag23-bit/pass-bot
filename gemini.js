@@ -12,7 +12,7 @@ Tu única función es leer el mensaje del usuario y devolver un JSON estructurad
 REGLAS:
 - El mensaje puede tener prefijo de chat exportado como "[27/03/2026 7:38] nombre: ..." — ignóralo completamente.
 - Si el mensaje contiene credenciales (servicio + contraseña), la acción es "save" aunque no diga "guarda".
-- El campo "service" debe ser siempre en minúsculas, sin espacios (ej: "gmail", "ionos", "netflix").
+- El campo "service" debe ser siempre en minúsculas, puede tener espacios (ej: "gmail", "schneider electric", "ionos").
 - Extrae la contraseña de forma EXACTA, sin modificarla ni truncarla.
 - Si el usuario pide generar una contraseña segura, acción "generate".
 
@@ -25,20 +25,23 @@ ACCIONES:
 - "unknown"  → no se entiende la intención
 
 FORMATO DE RESPUESTA (SOLO JSON, sin markdown, sin explicaciones):
-{"action":"...","service":"..."|null,"username":"..."|null,"password":"..."|null,"notes":"..."|null,"length":16}
+{"action":"...","service":"..."|null,"username":"..."|null,"password":"..."|null,"notes":"..."|null,"length":null}
 
 EJEMPLOS:
 Mensaje: "[08:12] lixar: para ionos user: info@karting.com pass:Abc#2026!"
 → {"action":"save","service":"ionos","username":"info@karting.com","password":"Abc#2026!","notes":null,"length":null}
+
+Mensaje: "guarda schneider electric user:iliaslag23@gmail.com pass:BJ8YUnkmw2U8Cd#"
+→ {"action":"save","service":"schneider electric","username":"iliaslag23@gmail.com","password":"BJ8YUnkmw2U8Cd#","notes":null,"length":null}
+
+Mensaje: "borra la contraseña de ionos"
+→ {"action":"delete","service":"ionos","username":null,"password":null,"notes":null,"length":null}
 
 Mensaje: "cuál es la clave de netflix"
 → {"action":"get","service":"netflix","username":null,"password":null,"notes":null,"length":null}
 
 Mensaje: "qué contraseñas tengo"
 → {"action":"list","service":null,"username":null,"password":null,"notes":null,"length":null}
-
-Mensaje: "borra spotify"
-→ {"action":"delete","service":"spotify","username":null,"password":null,"notes":null,"length":null}
 
 Mensaje: "genera una contraseña de 20 caracteres"
 → {"action":"generate","service":null,"username":null,"password":null,"notes":null,"length":20}`;
@@ -62,34 +65,59 @@ async function parseIntent(message) {
 }
 
 function localParser(message) {
-  const clean = message.replace(/^\[.*?\]\s*[\w\s]+:\s*/, '').trim();
+  const clean = message.replace(/^\[[\d/: ]+\]\s*[\w\s]+:\s*/, '').trim();
   const lower = clean.toLowerCase();
+  const EMPTY = { service: null, username: null, password: null, notes: null, length: null };
 
-  if (/genera|crea.*contrase|contrase.*aleatoria/i.test(lower)) {
-    const lenMatch = clean.match(/(\d+)\s*(?:caracteres|chars|letras)/i);
-    return { action: 'generate', service: null, username: null, password: null, notes: null, length: lenMatch ? parseInt(lenMatch[1]) : 16 };
+  // Generar
+  if (/genera|contrase[ñn]a aleatoria/i.test(lower) && !/user\s*:|pass\s*:/i.test(lower)) {
+    const len = (clean.match(/(\d+)\s*(?:caracteres|chars)/i) || [])[1];
+    return { action: 'generate', ...EMPTY, length: len ? parseInt(len) : 16 };
   }
-  if (/qu[eé]\s+(?:contrase[ñn]as|servicios)|lista|listar|todos|tengo guardad/i.test(lower)) {
-    return { action: 'list', service: null, username: null, password: null, notes: null, length: null };
+
+  // Listar
+  if (/qu[eé]\s+(?:contrase[ñn]as|servicios|tengo)|lista|listar|todos.*servic|tengo guardad/i.test(lower)) {
+    return { action: 'list', ...EMPTY };
   }
+
+  // Borrar — quitar palabras vacías y extraer el nombre real del servicio
   if (/borra|elimina/i.test(lower)) {
-    const service = clean.replace(/.*(?:borra|elimina)\s*/i, '').trim().split(/\s+/)[0]?.toLowerCase() || null;
-    return { action: 'delete', service, username: null, password: null, notes: null, length: null };
-  }
-  if (/cu[aá]l|dime|dame/i.test(lower) && !/pass|user/i.test(lower)) {
-    const m = clean.match(/(?:de|del)\s+([\w.-]+)/i);
-    return { action: 'get', service: m?.[1]?.toLowerCase() || null, username: null, password: null, notes: null, length: null };
-  }
-
-  const userMatch = clean.match(/(?:user(?:name)?|usuario|email|correo)\s*:?\s*(\S+@\S+|\S+)/i);
-  const passMatch = clean.match(/(?:pass(?:word)?|contrase[ñn]a|clave)\s*:?\s*(\S+)/i);
-  const panelMatch = clean.match(/panel\s+de\s+([\w.-]+)/i) || clean.match(/(?:de|a)\s+([\w.-]+)\s+(?:user|pass|contrase)/i);
-
-  if (passMatch) {
-    return { action: 'save', service: panelMatch?.[1]?.toLowerCase() || null, username: userMatch?.[1] || null, password: passMatch[1], notes: null, length: null };
+    const afterVerb = clean.replace(/^.*?(?:borra|elimina)\s+/i, '').trim();
+    const service = afterVerb
+      .replace(/^(?:la|el|las|los)\s+/i, '')
+      .replace(/^(?:contrase[ñn]a|clave)\s+(?:de\s+)?/i, '')
+      .replace(/^(?:de|del)\s+/i, '')
+      .trim().toLowerCase() || null;
+    return { action: 'delete', ...EMPTY, service };
   }
 
-  return { action: 'unknown', service: null, username: null, password: null, notes: null, length: null };
+  // Consultar
+  if (/cu[aá]l|d[ií]me|dame|consulta/i.test(lower) && !/user\s*:|pass\s*:/i.test(lower)) {
+    const m = clean.match(/\bde\s+([\w\s.-]+?)(?:\s*[?.,]?\s*$)/i);
+    return { action: 'get', ...EMPTY, service: m?.[1]?.trim().toLowerCase() || null };
+  }
+
+  // Guardar — detectar credenciales
+  const userMatch = clean.match(/(?:user(?:name)?|usuario|email|correo)\s*:\s*(\S+)/i);
+  const passMatch = clean.match(/(?:pass(?:word)?|contrase[ñn]a|clave)\s*:\s*(\S+)/i)
+                 || clean.match(/(?:^|\s)\/(\S{4,})/);
+
+  if (passMatch || userMatch) {
+    const credPos = clean.search(/(?:user(?:name)?|usuario|email|correo|pass(?:word)?|contrase[ñn]a|clave)\s*:/i);
+    const slashPos = clean.search(/(?:\s)\/\S{4,}/);
+    const cutAt = credPos > 0 ? credPos : slashPos > 0 ? slashPos : clean.length;
+
+    const service = clean.substring(0, cutAt)
+      .replace(/^(?:guarda|crea|crear|añade|agrega|nueva?|ccrea|salva)\s+/i, '')
+      .replace(/^(?:la\s+)?(?:contrase[ñn]a|clave|credenciales?)\s+(?:de|para)\s+/i, '')
+      .replace(/^(?:para|de|del)\s+/i, '')
+      .replace(/[/:,]+$/, '')
+      .trim().toLowerCase() || null;
+
+    return { action: 'save', service, username: userMatch?.[1] || null, password: passMatch?.[1] || null, notes: null, length: null };
+  }
+
+  return { action: 'unknown', ...EMPTY };
 }
 
 module.exports = { parseIntent };
