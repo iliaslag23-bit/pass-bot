@@ -11,4 +11,5 @@ COPY . .
 VOLUME ["/data"]
 ENV DB_PATH=/data/vault.db
 
+EXPOSE 3000
 CMD ["node", "bot.js"]

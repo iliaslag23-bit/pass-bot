@@ -1,5 +1,9 @@
 require('dotenv').config();
+const http = require('http');
 const TelegramBot = require('node-telegram-bot-api');
+
+// Health check para Easypanel
+http.createServer((req, res) => res.writeHead(200).end('OK')).listen(3000);
 const { parseIntent } = require('./gemini');
 const { savePassword, getPassword, listServices, deletePassword, countPasswords } = require('./db');
 const { encrypt, decrypt, generatePassword } = require('./crypto');
